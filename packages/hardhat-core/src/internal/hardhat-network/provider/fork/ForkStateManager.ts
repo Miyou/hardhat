@@ -103,6 +103,7 @@ export class ForkStateManager implements PStateManager {
   }
 
   public async getAccount(address: Buffer): Promise<Account> {
+    debugger
     const localAccount = this._state.get(bufferToHex(address));
 
     const localNonce = localAccount?.get("nonce");

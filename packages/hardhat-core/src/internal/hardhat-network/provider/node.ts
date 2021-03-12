@@ -11,10 +11,12 @@ import { StateManager } from "@nomiclabs/ethereumjs-vm/dist/state";
 import chalk from "chalk";
 import debug from "debug";
 import Common from "ethereumjs-common";
+import { chains as knownChains } from "ethereumjs-common/dist/chains";
 import { FakeTransaction, Transaction } from "ethereumjs-tx";
 import {
   BN,
   bufferToHex,
+  bufferToInt,
   ECDSASignature,
   ecsign,
   hashPersonalMessage,
@@ -201,7 +203,6 @@ export class HardhatNode extends EventEmitter {
   private readonly _vmTracer: VMTracer;
   private readonly _vmTraceDecoder: VmTraceDecoder;
   private readonly _solidityTracer: SolidityTracer;
-  private readonly _vmDebugTracer: VMDebugTracer;
   private readonly _consoleLogger: ConsoleLogger = new ConsoleLogger();
   private _failedStackTraces = 0;
 
@@ -225,8 +226,6 @@ export class HardhatNode extends EventEmitter {
       false
     );
     this._vmTracer.enableTracing();
-
-    this._vmDebugTracer = new VMDebugTracer(this._vm);
 
     const contractsIdentifier = new ContractsIdentifier();
     this._vmTraceDecoder = new VmTraceDecoder(contractsIdentifier);
@@ -860,17 +859,39 @@ export class HardhatNode extends EventEmitter {
     return this._runInBlockContext(
       new BN(block.header.number).subn(1),
       async () => {
-        const blockGasLimit = this.getBlockGasLimit();
-        const gasLeft = blockGasLimit.clone();
+        const blockNumber = bufferToInt(block.header.number);
+        const blockchain = this._blockchain;
+        let vm = this._vm;
+        if (
+          blockchain instanceof ForkBlockchain &&
+          blockNumber <= blockchain.getForkBlockNumber().toNumber()
+        ) {
+          const common = getCommon(
+            blockchain.getNetworkId(), // FVTODO or chainid?
+            blockNumber
+          );
+
+          vm = new VM({
+            common,
+            activatePrecompiles: true,
+            stateManager: this._vm.stateManager,
+            blockchain: this._vm.blockchain,
+          });
+        }
+
         for (const tx of block.transactions) {
-          const txHash = tx.hash();
+          console.log('===============>', tx.hash().toString("hex"));
+          const txWithCommon = new Transaction(tx, {
+            common: vm._common,
+          });
+          const txHash = txWithCommon.hash();
           if (txHash.equals(hash)) {
-            return this._vmDebugTracer.trace(async () => {
-              await this._reRunTx(tx, block, gasLeft);
+            const vmDebugTracer = new VMDebugTracer(vm);
+            return vmDebugTracer.trace(async () => {
+              await vm.runTx({ tx: txWithCommon, block });
             }, config);
           }
-          const txResult = await this._reRunTx(tx, block, gasLeft);
-          gasLeft.isub(txResult.gasUsed);
+          await vm.runTx({ tx: txWithCommon, block });
         }
         throw new TransactionExecutionError(
           `Unable to find a transaction in a block that contains that transaction, this should never happen`
@@ -1037,29 +1058,13 @@ export class HardhatNode extends EventEmitter {
     };
   }
 
-  private async _reRunTx(
-    tx: Transaction,
-    block: Block,
-    gasLeft: BN
-  ): Promise<RunTxResult> {
-    const shouldThrow = true;
-    const result = await this._runTx(tx, block, gasLeft, shouldThrow);
-    if (result === null) {
-      throw new TransactionExecutionError(
-        `Failed to execute mined transaction ${bufferToHex(
-          tx.hash()
-        )} for unknown reason, this should never happen`
-      );
-    }
-    return result;
-  }
-
   private async _runTx(
     tx: Transaction,
     block: Block,
     gasLeft: BN,
     shouldThrow: boolean
   ): Promise<RunTxResult | null> {
+    // FVTODO is this necessary?
     const preRunStateRoot = await this._stateManager.getStateRoot();
     try {
       const txGasLimit = new BN(tx.gasLimit);
@@ -1426,6 +1431,9 @@ export class HardhatNode extends EventEmitter {
     await this._setBlockContext(block);
     try {
       return await action();
+    } catch (e) {
+      debugger
+      throw e
     } finally {
       await this._restoreBlockContext(currentStateRoot);
     }
@@ -1684,5 +1692,17 @@ export class HardhatNode extends EventEmitter {
       result,
       filterId,
     });
+  }
+}
+
+function getCommon(networkId: number, blockNumber: number): Common | undefined {
+  try {
+    const common = Common.forCustomChain(networkId, {});
+
+    common.setHardfork(common.activeHardfork(blockNumber));
+
+    return common;
+  } catch (e) {
+    return undefined;
   }
 }

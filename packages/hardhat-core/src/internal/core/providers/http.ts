@@ -95,6 +95,12 @@ export class HttpProvider extends EventEmitter implements EIP1193Provider {
     // We already know that it has this type, but TS can't infer it.
     const responses = jsonRpcResponses as SuccessfulJsonRpcResponse[];
 
+    // FVTODO we need to match the results with the requests, because
+    // a [{id: 1}, {id: 2}] batch request can produce a
+    // [{id: 2}, {id: 1}] batch response, and the consumer assumes
+    // that each item in the responses matches the item in the same
+    // position in the requests
+
     return responses.map((response) => response.result);
   }
 

@@ -36,6 +36,15 @@ export class JsonRpcClient {
     return this._networkId;
   }
 
+  public async getDebugTraceTransaction(transactionHash: Buffer): Promise<any> {
+    return this._perform(
+      "debug_traceTransaction",
+      [bufferToHex(transactionHash)],
+      t.any,
+      () => undefined
+    );
+  }
+
   public async getStorageAt(
     address: Buffer,
     position: Buffer,
@@ -182,6 +191,7 @@ export class JsonRpcClient {
     address: Buffer,
     blockNumber: BN
   ): Promise<{ code: Buffer; transactionCount: BN; balance: BN }> {
+    try {
     const results = await this._performBatch(
       [
         {
@@ -208,6 +218,10 @@ export class JsonRpcClient {
       transactionCount: results[1],
       balance: results[2],
     };
+    } catch (e) {
+      debugger
+      throw e
+    }
   }
 
   private async _perform<T>(

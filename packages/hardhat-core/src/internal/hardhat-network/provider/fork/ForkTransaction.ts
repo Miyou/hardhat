@@ -16,6 +16,8 @@ import { InternalError } from "../errors";
  */
 export class ForkTransaction extends Transaction {
   private readonly _chainId: number;
+  public _ogData: any;
+  public _ogOpts: any;
 
   constructor(
     chainId: number,
@@ -23,6 +25,9 @@ export class ForkTransaction extends Transaction {
     opts: TransactionOptions = {}
   ) {
     super(data, opts);
+
+    this._ogData = data;
+    this._ogOpts = opts
 
     this._chainId = chainId;
 
