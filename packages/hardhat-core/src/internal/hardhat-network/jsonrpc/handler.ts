@@ -86,34 +86,22 @@ export default class JsonRpcHandler {
 
       try {
         rpcReq = _readWsRequest(msg as string);
-
-        if (!isValidJsonRequest(rpcReq)) {
-          throw new InvalidRequestError("Invalid request");
-        }
-
-        rpcResp = await this._handleRequest(rpcReq);
-
-        // If eth_subscribe was successful, keep track of the subscription id,
-        // so we can cleanup on websocket close.
-        if (
-          rpcReq.method === "eth_subscribe" &&
-          isSuccessfulJsonResponse(rpcResp)
-        ) {
-          subscriptions.push(rpcResp.result.id);
-        }
       } catch (error) {
         rpcResp = _handleError(error);
       }
 
-      // Validate the RPC response.
-      if (!isValidJsonResponse(rpcResp)) {
-        // Malformed response coming from the provider, report to user as an internal error.
-        rpcResp = _handleError(new InternalError("Internal error"));
+      if (Array.isArray(rpcReq)) {
+        const responses = await Promise.all(
+          rpcReq.map((singleReq: any) =>
+            this._handleSingleWsRequest(singleReq, subscriptions)
+          )
+        );
+
+        ws.send(JSON.stringify(responses));
+        return;
       }
 
-      if (rpcReq !== undefined) {
-        rpcResp.id = rpcReq.id;
-      }
+      rpcResp = await this._handleSingleWsRequest(rpcReq, subscriptions);
 
       ws.send(JSON.stringify(rpcResp));
     });
@@ -152,6 +140,42 @@ export default class JsonRpcHandler {
     res.statusCode = 200;
     res.setHeader("Content-Type", "application/json");
     res.end(JSON.stringify(rpcResp));
+  }
+
+  private async _handleSingleWsRequest(req: any, subscriptions: string[]) {
+    if (!isValidJsonRequest(req)) {
+      return _handleError(new InvalidRequestError("Invalid request"));
+    }
+
+    const rpcReq: JsonRpcRequest = req;
+    let rpcResp: JsonRpcResponse | undefined;
+
+    try {
+      rpcResp = await this._handleRequest(rpcReq);
+    } catch (error) {
+      rpcResp = _handleError(error);
+    }
+
+    // If eth_subscribe was successful, keep track of the subscription id,
+    // so we can cleanup on websocket close.
+    if (
+      rpcReq.method === "eth_subscribe" &&
+      isSuccessfulJsonResponse(rpcResp)
+    ) {
+      subscriptions.push(rpcResp.result.id);
+    }
+
+    // Validate the RPC response.
+    if (!isValidJsonResponse(rpcResp)) {
+      // Malformed response coming from the provider, report to user as an internal error.
+      rpcResp = _handleError(new InternalError("Internal error"));
+    }
+
+    if (rpcReq !== undefined) {
+      rpcResp.id = rpcReq.id !== undefined ? rpcReq.id : null;
+    }
+
+    return rpcResp;
   }
 
   private async _handleSingleRequest(req: any): Promise<JsonRpcResponse> {
